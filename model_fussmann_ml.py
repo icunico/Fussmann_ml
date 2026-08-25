@@ -5,16 +5,16 @@ import matplotlib.pyplot as plt
 
 # Parametri
 #P1, P2, P3
-r = [2.5, 2.5, 2.5]
+r = [3, 2, 1]
 K = [1, 1, 1]
 
 #Parametri per C1
-aP1C1 = 7.5
-aP1C2 = 2.5
-aP2C1 = 5.0
-aP2C2 = 5.0
-aP3C1 = 2.5
-aP3C2 = 7.5
+aP1C1 = 9.0
+aP1C2 = 3.0
+aP2C1 = 2.0
+aP2C2 = 6.0
+aP3C1 = 1.0
+aP3C2 = 3.0
 bP1C1 = 5.0
 bP1C2 = 5.0
 bP2C1 = 5.0
@@ -28,8 +28,8 @@ dC2 = 0.1
 aP1X1 = 0.25
 aP2X1 = 0.25
 aP3X1 = 0.25
-aC1X1 = 1.0
-aC2X1 = 1.0
+aC1X1 = 3.0
+aC2X1 = 3.0
 bP1X1 = 0.5
 bP2X1 = 0.5
 bP3X1 = 0.5
@@ -38,16 +38,16 @@ bC2X1 = 2.0
 dX1 = 0.2
 
 # Parametri Y
-aX1Y1 = 0.25
+aX1Y1 = 0.75
 bX1Y1 = 0.5
 dY1 = 0.1
 
 # Parametri Z
-aY1Z1 = 0.125
-bY1Z1 = 0.25
+aY1Z1 = 0.45
+bY1Z1 = 0.3
 dZ1 = 0.1
 #microbial loop
-tau=14
+tau=50
 
 def ecological_network(t, vars):
     # Estrai tutte le variabili
