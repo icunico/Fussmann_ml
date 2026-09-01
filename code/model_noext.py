@@ -165,4 +165,3 @@ elif not flag_extin and not flag_neg:
     print("gold")
 else:
     print("Condizione non classificata (estinzione o negatività)")
-
