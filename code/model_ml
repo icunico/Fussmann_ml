@@ -1,1 +1,168 @@
+import netCDF4 as nc
+import numpy as np
+import ordpy as od
+import pyfabm
+import scipy.integrate
+
+# Caricamento modello
+model = pyfabm.Model("fabm_netcom_tot.yaml")
+model.cell_thickness = 1.0
+assert model.checkReady(), "Model not ready"
+
+# Inizializza flag
+flag_extin = False
+flag_neg = False
+flag_chaos = False
+flag_ss = False
+
+# Ottieni la lista completa delle variabili di stato di FABM
+variable_names = [var.path for var in model.state_variables]
+
+# 1. Specie BIOLOGICHE (utilizzate per l'evento di estinzione)
+specie_viventi_nomi = ["P1/DW1", "P1/DW2", "C1/DWC1", "C1/DWC2"]
+specie_viventi_idx = [
+    i for i, name in enumerate(variable_names) if name in specie_viventi_nomi
+]
+
+# 2. Tutte le specie da monitorare per Steady State, Chaos e Negatività
+specie_totali_nomi = ["P1/DW1", "P1/DW2", "C1/DWC1", "C1/DWC2",  "D/DWD1", "N/DWN1"]
+specie_totali_idx = [
+    i for i, name in enumerate(variable_names) if name in specie_totali_nomi
+]
+
+# Contatori eventi per l'estinzione (solo per specie viventi)
+event_counters = {iv: 0 for iv in specie_viventi_idx}
+
+
+# Funzione derivata temporale
+def dy(t0, y):
+    model.state[:] = y
+    return model.getRates()
+
+
+# Funzione evento per estinzione (monitora SOLO produttori e consumatori)
+def event(t, y):
+    for iv in specie_viventi_idx:
+        if y[iv] < 0.001:
+            event_counters[iv] += 1
+            if event_counters[iv] >= 20000:
+                return 0  # Ferma l'integrazione
+        else:
+            event_counters[iv] = 0
+    return 1
+
+
+event.terminal = True
+event.direction = -1
+
+# Integrazione temporale
+t_ex = 3600 * 100000
+t_eval = np.linspace(0, t_ex, 50000)
+sol = scipy.integrate.solve_ivp(
+    dy, [0.0, t_ex], model.state, t_eval=t_eval, max_step=5000, events=event
+)
+
+# Estinzione?
+if any(ev.size > 0 for ev in sol.t_events):
+    flag_extin = True
+else:
+    # Estrai dati dell'ultimo intervallo (40000:50000)
+    t = sol.t
+    y = sol.y.T
+    y = y[40000:]
+    t_chaos = t[40000:]
+
+    # Controllo negatività
+    for iv in specie_totali_idx:
+        if np.any(y[:, iv] < -0.01):
+            flag_neg = True
+
+    # Statistiche su tutte le componenti del sistema
+    y_controllo = y[:, specie_totali_idx]
+    threshold = 0.01
+    mean_y = np.mean(y_controllo, axis=0)
+    std_y = np.std(y_controllo, axis=0)
+
+    # Chaos detection
+    taux = np.logspace(np.log(1), np.log10(len(t_chaos) // 2), 20, dtype=int)
+    cmax = 0.5
+
+    for iv in specie_totali_idx:
+        T = y[:, iv]
+        H = np.zeros(len(taux))
+        C = np.zeros(len(taux))
+
+        for it, tx in enumerate(taux):
+            try:
+                H[it], C[it] = od.complexity_entropy(T, taux=tx, dx=6)
+            except:
+                H[it], C[it] = np.nan, np.nan
+
+        for it in range(len(taux)):
+            if not np.isnan(H[it]) and not np.isnan(C[it]):
+                if 0.45 <= H[it] <= 0.7 and abs(C[it] - cmax) < 0.1 * cmax:
+                    flag_chaos = True
+                    break
+        if flag_chaos:
+            break
+
+    # Steady-state detection
+    ratio = np.where(mean_y >= threshold, std_y / mean_y, 0)
+    flag_ss = np.max(ratio) <= 0.01
+
+# ==========================================
+# SALVATAGGIO SU NETCDF (COMPATIBILE CON PARSAC)
+# ==========================================
+fileoutput = "result.nc"
+f = nc.Dataset(fileoutput, mode="w")
+f.createDimension("flag", 1)
+
+# Flag di classificazione
+f.createVariable("flag", np.int8, ("flag",))[:] = 1
+f.createVariable("flag_chaos", np.int8, ("flag",))[:] = int(flag_chaos)
+f.createVariable("flag_ss", np.int8, ("flag",))[:] = int(flag_ss)
+f.createVariable("flag_extin", np.int8, ("flag",))[:] = int(flag_extin)
+f.createVariable("flag_neg", np.int8, ("flag",))[:] = int(flag_neg)
+
+# Calcolo valori all'equilibrio solo per Steady State, altrimenti NaN
+if flag_ss and not flag_extin:
+    y_eq = np.mean(y, axis=0)
+else:
+    y_eq = [np.nan] * len(model.state_variables)
+
+# Mappatura esplicita: Nome Target XML <-> Percorso reale FABM
+target_to_fabm = {
+    "eq_P1_DW1": "P1/DW1",
+    "eq_P1_DW2": "P1/DW2",
+    "eq_P1_DW3": "P1/DW3",
+    "eq_C1_DWC1": "C1/DWC1",
+    "eq_C1_DWC2": "C1/DWC2",
+    "eq_X_DWX1": "X/DWX1",
+    "eq_Y_DWY1": "Y/DWY1",
+    "eq_Z_DWZ1": "Z/DWZ1",
+    "eq_D_DWD": "D/DWD1",    # Mappa l'XML atteso (senza 1) al nome FABM reale (con 1)
+    "eq_N_DWN": "N/DWN1"     # Mappa l'XML atteso (senza 1) al nome FABM reale (con 1)
+}
+
+# Scrittura di TUTTE le variabili per evitare NameError in PARSAC
+for target_name, fabm_path in target_to_fabm.items():
+    var_nc = f.createVariable(target_name, np.float64, ("flag",))
+    
+    if fabm_path in variable_names:
+        idx = variable_names.index(fabm_path)
+        var_nc[:] = y_eq[idx]
+    else:
+        var_nc[:] = np.nan
+
+f.close()
+
+# Output a schermo
+if flag_ss:
+    print("flag_ss = True")
+elif flag_chaos:
+    print("flag_chaos = True")
+elif not flag_extin and not flag_neg:
+    print("gold")
+else:
+    print("Condizione non classificata (estinzione o negatività)")
 
